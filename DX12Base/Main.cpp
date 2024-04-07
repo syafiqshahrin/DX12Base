@@ -22,6 +22,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	Microsoft::WRL::ComPtr<IDXGIAdapter4> adapter;
 	Microsoft::WRL::ComPtr<ID3D12Device10> device;
 	Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue;
+	Microsoft::WRL::ComPtr<IDXGISwapChain4> swapchain;
 
 	UINT dxgiFactoryFlag = 0;
 
@@ -78,6 +79,28 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		{
 			queue.Get()->SetName(L"MainQueue");
 			DEBUG("Command Queue Created");
+
+			DXGI_SWAP_CHAIN_DESC1 swapchainDesc = {};
+			swapchainDesc.BufferCount = 2;
+			swapchainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+			swapchainDesc.Width = window.GetWidth();
+			swapchainDesc.Height= window.GetHeight();
+			swapchainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			swapchainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+			swapchainDesc.SampleDesc.Count = 1;
+			swapchainDesc.SampleDesc.Quality = 0;
+			//swapchainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
+			//swapchainDesc.Flags = ;
+			//swapchainDesc.Stereo;
+			
+			Microsoft::WRL::ComPtr<IDXGISwapChain1> swapchain1;
+			if (SUCCEEDED(factory->CreateSwapChainForHwnd(queue.Get(), window.GetWindHandle(), &swapchainDesc, nullptr, nullptr, swapchain1.GetAddressOf())))
+			{
+				swapchain1->QueryInterface(__uuidof(IDXGISwapChain4), (LPVOID*)&swapchain);
+				swapchain1.Detach();
+				DEBUG("Swapchain created")
+			}
+
 		}
 		
 		
