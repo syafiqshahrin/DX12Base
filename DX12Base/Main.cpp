@@ -6,6 +6,92 @@
 #include "Debug.h"
 #include <vector>
 
+
+
+HRESULT CreateDebugInterface(Microsoft::WRL::ComPtr<ID3D12Debug6>* debugInterface)
+{
+	Microsoft::WRL::ComPtr<ID3D12Debug6> debug;
+	HRESULT result = D3D12GetDebugInterface(__uuidof(ID3D12Debug6), (LPVOID*)&debug);
+	
+	if (FAILED(result))
+	{
+		DEBUG("Failed creating debug interface");
+	}
+	else
+	{
+		debug.As(debugInterface);
+	}
+
+	return result;
+}
+
+HRESULT CreateFactory(UINT flag, Microsoft::WRL::ComPtr<IDXGIFactory6>* factory)
+{
+	Microsoft::WRL::ComPtr<IDXGIFactory6> fact;
+	HRESULT result = CreateDXGIFactory2(flag, __uuidof(IDXGIFactory6), (LPVOID*)&fact);
+	if (FAILED(result))
+	{
+		DEBUG("Failed creating factory");
+	}
+	else
+	{
+		fact.As(factory);
+	}
+
+	return result;
+
+}
+
+HRESULT GetDisplayAdapter(Microsoft::WRL::ComPtr<IDXGIAdapter4>* deviceAdapter, IDXGIFactory6* factory)
+{
+	HRESULT result;
+	Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
+
+	for (UINT adapterIndex = 0; SUCCEEDED(factory->EnumAdapters1(adapterIndex, &adapter)); ++adapterIndex)
+	{
+		DXGI_ADAPTER_DESC1 desc;
+		adapter->GetDesc1(&desc);
+
+		if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
+		{
+			continue;
+		}
+		result = D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_12_0, __uuidof(ID3D12Device), nullptr);
+		if (SUCCEEDED(result))
+		{
+			break;
+		}
+
+	}
+
+	adapter.As(deviceAdapter);
+
+	return result;
+}
+
+HRESULT CreateDevice(IDXGIAdapter4* adapter, Microsoft::WRL::ComPtr<ID3D12Device10>* device)
+{
+	HRESULT result = D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, __uuidof(ID3D12Device10), (LPVOID*)device);
+	if (FAILED(result))
+	{
+		DEBUG("Failed creating device");
+	}
+
+	device->Get()->SetName(L"MainDevice");
+	DEBUG("Device Created");
+
+	return result;
+}
+
+void DisplayAdapterInfo(IDXGIAdapter4* deviceAdapter)
+{
+	DXGI_ADAPTER_DESC3 desc;
+	deviceAdapter->GetDesc3(&desc);
+	DEBUG(desc.Description);
+	DEBUG(desc.DedicatedVideoMemory);
+}
+
+
 int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
 	Window window(L"DX12", 1920, 1080, hInstance);
@@ -19,6 +105,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	//Create Swap chain
 	//Create depth stencil buffer resource/view
 	//Create base viewport
+	//create a fence for command list
 	//Root descriptors?
 	//Pipeline state objects? (PSOs)
 
@@ -40,75 +127,36 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	Microsoft::WRL::ComPtr<ID3D12Resource> depthBuffer;
 	Microsoft::WRL::ComPtr<ID3D12CommandAllocator> cmdAllocator;
 	Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList7> cmdList;
-
-
-
+	Microsoft::WRL::ComPtr<ID3D12PipelineState> pipelineState;
+	Microsoft::WRL::ComPtr<ID3D12Fence1> fence;
+	UINT fenceValue;
+	HANDLE fenceEvent;
 
 	UINT rtvHeapOffset;
-	
-	
 	UINT currentFrameIndex;
-
 	UINT dxgiFactoryFlag = 0;
+
 #ifdef _DEBUG
-
-	if (FAILED(D3D12GetDebugInterface(__uuidof(ID3D12Debug6), (LPVOID*)&debug)))
-	{
-		DEBUG("Faile created debug interface");
-		return -1;
-
-	}
+	CreateDebugInterface(&debug);
 
 	debug.Get()->SetEnableAutoName(true);
 	debug->EnableDebugLayer();
 	dxgiFactoryFlag |= DXGI_CREATE_FACTORY_DEBUG;
 #endif // DEBUG
 
+	//Create factory interface to use it to get the adapters
+	CreateFactory(dxgiFactoryFlag, &factory);
 
-	if (FAILED(CreateDXGIFactory2(dxgiFactoryFlag, __uuidof(IDXGIFactory6), (LPVOID*)&factory)))
-	{
-		DEBUG("Failed creating factory");
-		return -1;
-	}
+	//Go through available adapters and check that it's not a software adapter and that the adapter is valid by checking if it can create a device successfully
+	GetDisplayAdapter(&adapter, factory.Get());
 
-	Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter1;
-	for (UINT adapterIndex = 0; SUCCEEDED(factory->EnumAdapters1(adapterIndex, &adapter1)); ++adapterIndex)
-	{
-		DXGI_ADAPTER_DESC1 desc;
-		adapter1->GetDesc1(&desc);
+	//Get adapter info 
+	DisplayAdapterInfo(adapter.Get());
 
-		if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
-		{
-			continue;
-		}
-
-		if (SUCCEEDED(D3D12CreateDevice(adapter1.Get(), D3D_FEATURE_LEVEL_12_0, __uuidof(ID3D12Device), nullptr)))
-		{
-			break;
-		}
-
-	}
-
-	adapter1.As(&adapter);
-	adapter1.Detach();
-	adapter1.Reset();
+	//Create device
+	CreateDevice(adapter.Get(), &device);
 
 
-
-
-	DXGI_ADAPTER_DESC3 desc;
-	adapter->GetDesc3(&desc);
-	DEBUG(desc.Description);
-	DEBUG(desc.DedicatedVideoMemory);
-
-	if (FAILED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_12_0, __uuidof(ID3D12Device10), (LPVOID*)&device)))
-	{
-		DEBUG("Failed creating device");
-		return -1;
-	}
-
-	device.Get()->SetName(L"MainDevice");
-	DEBUG("Device Created");
 
 	D3D12_COMMAND_QUEUE_DESC queueDesc = {};
 	queueDesc.NodeMask = 0;
@@ -144,10 +192,6 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	DEBUG("Command list created");
 
 
-	//binds allocator and pso to command list and opens the list for recording
-	cmdList->Reset(cmdAllocator.Get(), nullptr);
-	//cmdList->Close();
-
 
 	//create swap chain
 	DXGI_SWAP_CHAIN_DESC1 swapchainDesc = {};
@@ -171,7 +215,6 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	}
 
 	swapchain1.As(&swapchain);
-	swapchain1.Detach();
 	DEBUG("Swapchain created");
 
 	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
@@ -199,6 +242,17 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		DEBUG("Backbuffer rtv created");
 	}
 
+	if (FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence1), (LPVOID*)&fence)))
+	{
+		DEBUG("Failed creating fence");
+		return -1;
+	}
+	fenceValue = 1;
+	fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+	DEBUG("Created fence and fence event");
+	
+
+
 	//create depth/stencil buffer resource
 	//create descriptor heap for depth stencil view
 
@@ -223,7 +277,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	dsHeapProperty.VisibleNodeMask = 0;
 
 
-	float clearCol[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	float clearCol[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
 	D3D12_CLEAR_VALUE dsClearVal = {};
 	dsClearVal.DepthStencil.Depth = 1;
 	dsClearVal.DepthStencil.Stencil = 0;
@@ -262,6 +316,8 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	device->CreateDepthStencilView(depthBuffer.Get(), &dsvDesc, dsvHeap->GetCPUDescriptorHandleForHeapStart());
 	DEBUG("depth stencil view created");
 
+	//binds allocator and pso to command list and opens the list for recording
+	cmdList->Reset(cmdAllocator.Get(), pipelineState.Get());
 
 	//transition depth resource state from common to dsv
 	//need to have command list opened first to submit this command
@@ -285,6 +341,24 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	cmdList->RSSetViewports(1, &viewport);
 	
+	currentFrameIndex = swapchain->GetCurrentBackBufferIndex();
+	cmdList->Close();
+
+	ID3D12CommandList* ppCommandLists[] = { cmdList.Get() };
+	queue->ExecuteCommandLists(1, ppCommandLists);
+
+
+	{
+		const UINT64 fenceVal = fenceValue;
+		queue->Signal(fence.Get(), fenceVal);
+		fenceValue++;
+
+		if (fence->GetCompletedValue() < fenceVal)
+		{
+			fence->SetEventOnCompletion(fenceVal, fenceEvent);
+			WaitForSingleObject(fenceEvent, INFINITE);
+		}
+	}
 
 
 	//main loop
@@ -294,18 +368,58 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		{
 			break;
 		}
+
+		//Render code
+		{
+			//Reset cmd allocator
+			cmdAllocator->Reset();
+			//Reset cmd 
+			cmdList->Reset(cmdAllocator.Get(), pipelineState.Get());
+			//transition current back buffer from present state to render target state
+			D3D12_RESOURCE_BARRIER frameBufferBarrier = {};
+			frameBufferBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			frameBufferBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+			frameBufferBarrier.Transition.pResource = frameBuffers[currentFrameIndex].Get();
+			frameBufferBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+			frameBufferBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+			cmdList->ResourceBarrier(1, &frameBufferBarrier);
+			//clear render target to color
+			D3D12_CPU_DESCRIPTOR_HANDLE	rtvHeapHandle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
+			rtvHeapOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+			rtvHeapHandle.ptr += rtvHeapOffset * currentFrameIndex;
+
+			cmdList->ClearRenderTargetView(rtvHeapHandle, clearCol, 0, nullptr);
+			//transition current back buffer from render target state to present state
+			frameBufferBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			frameBufferBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+			frameBufferBarrier.Transition.pResource = frameBuffers[currentFrameIndex].Get();
+			frameBufferBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+			frameBufferBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+			cmdList->ResourceBarrier(1, &frameBufferBarrier);
+			//close command list
+			cmdList->Close();
+
+			//execute command list from command queue
+			ppCommandLists[0] = { cmdList.Get() };
+			queue->ExecuteCommandLists(1, ppCommandLists);
+			//swapchain present
+			swapchain->Present(1, 0);
+			//wait for fence
+			{
+				const UINT64 fenceVal = fenceValue;
+				queue->Signal(fence.Get(), fenceVal);
+				fenceValue++;
+
+				if (fence->GetCompletedValue() < fenceVal)
+				{
+					fence->SetEventOnCompletion(fenceVal, fenceEvent);
+					WaitForSingleObject(fenceEvent, INFINITE);
+				}
+				currentFrameIndex = swapchain->GetCurrentBackBufferIndex();
+			}
+		}
 	}
-
-	//dsvHeap.Get()->Release();
-	depthBuffer.Get()->Release();
-	rtvHeap.Get()->Release();
-	swapchain.Get()->Release();
-	//factory.Get()->Release();
-	//queue.Get()->Release();
-	device.Get()->Release();
-	adapter.Get()->Release();
-	debug.Get()->Release();
-
 
 	return 0;
 }
